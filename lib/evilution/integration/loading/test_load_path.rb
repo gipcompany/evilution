@@ -22,29 +22,37 @@ module Evilution::Integration::Loading::TestLoadPath
   # Prepend every relevant test directory to $LOAD_PATH (idempotently).
   # Iterate in reverse so the first entry from #dirs_for ends up frontmost,
   # preserving its order (mirrors how `ruby -Ia -Ib` lands a before b).
-  def add!(files, base: Evilution.project_base_dir)
-    dirs_for(files, base).reverse_each do |dir|
+  def add!(files, base: Evilution.project_base_dir, outside_root_dirs: true)
+    dirs_for(files, base, outside_root_dirs: outside_root_dirs).reverse_each do |dir|
       $LOAD_PATH.unshift(dir) unless $LOAD_PATH.include?(dir)
     end
   end
 
-  # The directories to put on $LOAD_PATH for the given resolved test files:
-  # the conventional test/ and spec/ roots under base, each file's own
-  # directory, and the topmost test/spec ancestor of each file (covers nested
-  # layouts like test/unit, spec/lib, spec/unit). Existing directories only,
-  # and only those inside the project base -- never a broad outside-project dir
-  # (e.g. a /tmp test file), which would over-widen $LOAD_PATH for the whole
-  # process (the baseline runs in the long-lived parent).
-  def dirs_for(files, base)
+  # The directories to put on $LOAD_PATH for the given files: the
+  # conventional test/ and spec/ roots under base, each file's own directory,
+  # and the topmost test/spec ancestor of each file (covers nested layouts
+  # like test/unit, spec/lib, spec/unit). Existing directories only, and only
+  # those inside the project base -- never a broad outside-project dir (e.g. a
+  # /tmp test file), which would over-widen $LOAD_PATH for the whole process
+  # (the baseline runs in the long-lived parent).
+  #
+  # A resolved test file outside every test root (a tests/ layout, a test
+  # reached through --spec or spec_mappings) still contributes its own
+  # directory, mirroring `ruby -Itests`. A preload does not: with
+  # `outside_root_dirs: false`, a `--preload config/evilution_preload.rb`
+  # would otherwise put config/ ahead of the gems, and `require "puma"` during
+  # Bundler.require would load the app's config/puma.rb (GH #1597).
+  def dirs_for(files, base, outside_root_dirs: true)
     base = File.expand_path(base)
     dirs = conventional_roots(base)
     Array(files).each do |file|
       file_dir = File.dirname(File.expand_path(file, base))
-      dirs << file_dir
       root = root_ancestor(file_dir, base)
-      dirs << root if root
+      next unless root || outside_root_dirs
+
+      dirs << file_dir << root
     end
-    dirs.uniq.select { |dir| File.directory?(dir) && within?(dir, base) }
+    dirs.compact.uniq.select { |dir| File.directory?(dir) && within?(dir, base) }
   end
 
   def within?(dir, base)

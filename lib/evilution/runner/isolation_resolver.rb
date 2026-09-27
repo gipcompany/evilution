@@ -131,7 +131,11 @@ class Evilution::Runner::IsolationResolver
   #   have both (a bare `require "support/foo"` must still resolve from spec/).
   # - minitest/test-unit: a test/test_helper.rb doing a non-relative
   #   `require "support/..."` needs test/ on $LOAD_PATH. Route through
-  #   TestLoadPath -- the same policy the per-mutation test load uses  -- so preload and mutation paths agree.
+  #   TestLoadPath, the policy the per-mutation test load uses, with one
+  #   deliberate difference: outside_root_dirs: false. A resolved test file
+  #   outside test/ and spec/ keeps its own directory, but a preload there
+  #   (config/evilution_preload.rb) must not, or config/ lands ahead of the
+  #   gems and config/puma.rb shadows the puma gem (GH #1597).
   def prepare_load_path_for_preload(preload_path)
     if config.integration == :rspec
       prepare_rspec_preload_load_path
@@ -148,7 +152,7 @@ class Evilution::Runner::IsolationResolver
 
   def prepare_test_preload_load_path(preload_path)
     base = detected_rails_root || Evilution.project_base_dir
-    Evilution::Integration::Loading::TestLoadPath.add!([preload_path], base: base)
+    Evilution::Integration::Loading::TestLoadPath.add!([preload_path], base: base, outside_root_dirs: false)
   end
 
   def resolve_spec_dir
