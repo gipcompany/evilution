@@ -5,6 +5,7 @@ require_relative "test_unit_crash_detector"
 require_relative "loading/test_load_path"
 require_relative "../spec_resolver"
 require_relative "../spec_selector"
+require_relative "../baseline"
 
 require_relative "../integration"
 
@@ -46,7 +47,16 @@ class Evilution::Integration::TestUnit < Evilution::Integration::Base
     new_classes = SubjectClassRegistry.newly_loaded do
       files.each { |f| load(File.expand_path(f)) }
     end
-    Dispatcher.call(new_classes, name: "evilution baseline").passed?
+    result = Dispatcher.call(new_classes, name: "evilution baseline")
+    Evilution::Baseline::Report.build(passed: result.passed?, failures: baseline_failures(result))
+  end
+
+  # Only failures and errors fail a run; pendings, omissions and notifications
+  # are faults too, and are left out.
+  def self.baseline_failures(result)
+    (result.failures + result.errors).map do |fault|
+      { id: fault.test_name, description: "", message: fault.message }
+    end
   end
 
   def self.baseline_test_files(test_file)
