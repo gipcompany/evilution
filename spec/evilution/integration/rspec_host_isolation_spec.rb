@@ -80,8 +80,8 @@ RSpec.describe "Evilution::Integration::RSpec host isolation" do
     RSpec::ExampleGroups.send(:remove_const, :AddedDuringRun) if RSpec::ExampleGroups.const_defined?(:AddedDuringRun)
   end
 
-  # GH #1765: a SuiteHookContext registered by the run held its reporter, and with
-  # it every example the run loaded, for the rest of the process.
+  # A SuiteHookContext registered by the run held its reporter, and with it
+  # every example the run loaded, for the rest of the process.
   it "drops the examples a run registers on RSpec::Core::AnonymousExampleGroup" do
     anonymous_examples = RSpec::Core::AnonymousExampleGroup.examples
     backup = anonymous_examples.dup

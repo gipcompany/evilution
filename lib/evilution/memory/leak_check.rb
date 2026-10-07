@@ -35,7 +35,7 @@ class Evilution::Memory::LeakCheck
   end
 
   # Growth from the first sample to the last, less the largest rise between two
-  # consecutive samples (GH #1765).
+  # consecutive samples.
   #
   # RSS does not grow by the byte. The allocator takes memory in chunks, so a
   # workload that has stopped growing can still step up once, by several MB,

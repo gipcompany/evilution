@@ -433,8 +433,8 @@ RSpec.describe Evilution::Memory::LeakCheck do
     end
   end
 
-  # GH #1765: the judgment must not let one allocator step decide the result, but
-  # must still catch a leak. Synthetic series, sampled the way #run samples
+  # The judgment must not let one allocator step decide the result, but must
+  # still catch a leak. Synthetic series, sampled the way #run samples
   # them: 100 iterations, a sample every 10.
   describe "judgment on synthetic RSS series" do
     def run_series(max_growth_kb:, iterations: 100, &rss_after)
