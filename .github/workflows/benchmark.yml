@@ -30,3 +30,4 @@ jobs:
         env:
           MEMORY_CHECK_ITERATIONS: '50'
           MEMORY_CHECK_MAX_GROWTH_KB: '10240'
+          MEMORY_CHECK_SEED: ${{ github.run_number }}
