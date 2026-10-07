@@ -62,7 +62,7 @@ RSpec.describe Evilution::Integration::RSpec::StateGuard::AnonymousExampleGroupE
     end
   end
 
-  # The leak this strategy exists for (GH #2): every run with a suite hook
+  # The leak this strategy exists for (GH #1765): every run with a suite hook
   # registers a SuiteHookContext on AnonymousExampleGroup, and each one holds
   # that run's reporter and through it every example the run loaded.
   it "releases the SuiteHookContext a run with a suite hook registers" do

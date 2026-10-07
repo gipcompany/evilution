@@ -2,7 +2,7 @@ name: Benchmark
 
 on:
   push: {}
-  # Lets the memory check be rerun on demand to measure how stable it is (GH #2).
+  # Lets the memory check be rerun on demand to measure how stable it is (GH #1765).
   workflow_dispatch: {}
 
 jobs:

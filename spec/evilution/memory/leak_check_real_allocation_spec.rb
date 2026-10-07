@@ -5,7 +5,7 @@ require "open3"
 require "rbconfig"
 require "evilution/memory/leak_check"
 
-# GH #2: the synthetic series in leak_check_spec.rb pin the arithmetic; these
+# GH #1765: the synthetic series in leak_check_spec.rb pin the arithmetic; these
 # check the judgment against what RSS actually does when a block keeps, or
 # drops, about 200 KB per iteration. Same parameters as the memory_check
 # per-mutation check: 100 iterations against a 10 MB budget, so a 200 KB leak

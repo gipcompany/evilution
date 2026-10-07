@@ -13,7 +13,7 @@ ITERATIONS = Integer(ENV.fetch("MEMORY_CHECK_ITERATIONS", 50))
 MAX_GROWTH_KB = Integer(ENV.fetch("MEMORY_CHECK_MAX_GROWTH_KB", 10_240))
 # Every check that picks mutations at random draws from its own Random seeded
 # with this, so a run exercises the same mutations every time and a failure can
-# be replayed by passing the printed seed back (GH #2).
+# be replayed by passing the printed seed back (GH #1765).
 SEED = Integer(ENV.fetch("MEMORY_CHECK_SEED", 42))
 COMPLEX_POOL_SIZE = 10
 COMPLEX_ITERATIONS = Integer(ENV.fetch("MEMORY_CHECK_COMPLEX_ITERATIONS", 100))
@@ -147,7 +147,7 @@ complex_turn = complex_pool.cycle
 # This check used to grow 20-41 MB over 20 mutations, which was put down to
 # per-mutation require() and redefinition warnings and given a 40 MB budget. It
 # was a leak: every run left its examples reachable from
-# RSpec::Core::AnonymousExampleGroup, about 1 MB per mutation (GH #2, fixed by
+# RSpec::Core::AnonymousExampleGroup, about 1 MB per mutation (GH #1765, fixed by
 # StateGuard::AnonymousExampleGroupExamples).
 #
 # The first run of a mutation still grows the process, as the heap reaches the

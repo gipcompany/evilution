@@ -4,7 +4,7 @@ require_relative "../state_guard"
 require_relative "../../rspec"
 
 # Drops the examples a run registers on RSpec::Core::AnonymousExampleGroup
-# (GH #2).
+# (GH #1765).
 #
 # Example#initialize appends every example to its group's `examples`. Most
 # groups are thrown away with the run, but AnonymousExampleGroup is a constant:
