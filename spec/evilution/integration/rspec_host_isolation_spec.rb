@@ -79,4 +79,25 @@ RSpec.describe "Evilution::Integration::RSpec host isolation" do
     RSpec::ExampleGroups.send(:remove_const, :HostPre) if !host_pre_was_preexisting && RSpec::ExampleGroups.const_defined?(:HostPre)
     RSpec::ExampleGroups.send(:remove_const, :AddedDuringRun) if RSpec::ExampleGroups.const_defined?(:AddedDuringRun)
   end
+
+  # A SuiteHookContext registered by the run held its reporter, and with it
+  # every example the run loaded, for the rest of the process.
+  it "drops the examples a run registers on RSpec::Core::AnonymousExampleGroup" do
+    anonymous_examples = RSpec::Core::AnonymousExampleGroup.examples
+    backup = anonymous_examples.dup
+
+    integration = Evilution::Integration::RSpec.new(test_files: ["spec/nonexistent_spec.rb"])
+    allow(RSpec::Core::Runner).to receive(:run) do |_, _, _|
+      RSpec::Core::SuiteHookContext.new("before(:suite) hook", RSpec::Core::NullReporter)
+      0
+    end
+    allow(integration).to receive(:reset_examples)
+
+    mutation = instance_double("Mutation", file_path: "lib/foo.rb")
+    integration.send(:run_tests, mutation)
+
+    expect(anonymous_examples).to eq(backup)
+  ensure
+    anonymous_examples&.replace(backup)
+  end
 end

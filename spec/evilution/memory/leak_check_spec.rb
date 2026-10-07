@@ -110,6 +110,26 @@ RSpec.describe Evilution::Memory::LeakCheck do
       expect(call_count).to eq(warmup + 10)
     end
 
+    it "runs warmup_iterations warmup iterations when given" do
+      call_count = 0
+      allow(Evilution::Memory).to receive(:rss_kb).and_return(100_000)
+
+      check = described_class.new(iterations: 10, max_growth_kb: 50_000, warmup_iterations: 20)
+      check.run { call_count += 1 }
+
+      expect(call_count).to eq(20 + 10)
+    end
+
+    it "takes no sample during warmup_iterations" do
+      calls = 0
+      allow(Evilution::Memory).to receive(:rss_kb) { calls * 100 }
+
+      check = described_class.new(iterations: 10, max_growth_kb: 50_000, warmup_iterations: 20)
+      check.run { calls += 1 }
+
+      expect(check.samples.first).to eq(2_000)
+    end
+
     # EV-9d62 / GH #1298: kill survivors from EV-j2kz 2026-05-30 baseline.
 
     # Line 12: kwarg default — `iterations: DEFAULT_ITERATIONS` mutated to
@@ -133,6 +153,7 @@ RSpec.describe Evilution::Memory::LeakCheck do
 
       expect(check.instance_variable_get(:@iterations)).to eq(described_class::DEFAULT_ITERATIONS)
       expect(check.instance_variable_get(:@max_growth_kb)).to eq(described_class::DEFAULT_MAX_GROWTH_KB)
+      expect(check.instance_variable_get(:@warmup_iterations)).to eq(described_class::WARMUP_ITERATIONS)
     end
 
     # Line 30: `samples.size < 2` — boundary at 2. Inject exactly two equal
@@ -168,29 +189,36 @@ RSpec.describe Evilution::Memory::LeakCheck do
       expect(check.growth_kb).to eq(0)
     end
 
-    # Line 39: `kb <= @max_growth_kb` boundary — passed? at equality.
-    it "passes when growth_kb equals max_growth_kb (boundary inclusive)" do
-      check = described_class.new(iterations: 1, max_growth_kb: 100)
-      check.instance_variable_set(:@samples, [0, 100])
+    # passed? judges sustained_growth_kb, not the endpoints: [0, 50, 150]
+    # grows 150 KB end to end, the largest single step is 100 KB, so 50 KB is
+    # sustained.
+    it "passes when sustained_growth_kb equals max_growth_kb (boundary inclusive)" do
+      check = described_class.new(iterations: 1, max_growth_kb: 50)
+      check.instance_variable_set(:@samples, [0, 50, 150])
 
       expect(check.passed?).to be true
     end
 
-    # Same line — kill `kb == @max_growth_kb` mutation: passes when growth_kb
-    # < max_growth_kb strictly.
-    it "passes when growth_kb is strictly less than max_growth_kb" do
+    it "passes when sustained_growth_kb is strictly less than max_growth_kb" do
       check = described_class.new(iterations: 1, max_growth_kb: 1000)
-      check.instance_variable_set(:@samples, [0, 250])
+      check.instance_variable_set(:@samples, [0, 50, 150])
 
       expect(check.passed?).to be true
     end
 
-    # Same line — passed? returns false above the threshold.
-    it "fails when growth_kb exceeds max_growth_kb" do
-      check = described_class.new(iterations: 1, max_growth_kb: 100)
-      check.instance_variable_set(:@samples, [0, 101])
+    it "fails when sustained_growth_kb exceeds max_growth_kb" do
+      check = described_class.new(iterations: 1, max_growth_kb: 49)
+      check.instance_variable_set(:@samples, [0, 50, 150])
 
       expect(check.passed?).to be false
+    end
+
+    it "passes when only the endpoints exceed max_growth_kb (single step)" do
+      check = described_class.new(iterations: 1, max_growth_kb: 100)
+      check.instance_variable_set(:@samples, [0, 0, 5_000, 5_000])
+
+      expect(check.growth_kb).to be > 100
+      expect(check.passed?).to be true
     end
 
     # Line 37: `return false if kb.nil?` — explicit unit test using nil samples
@@ -361,6 +389,81 @@ RSpec.describe Evilution::Memory::LeakCheck do
       check.instance_variable_set(:@samples, [nil, nil])
 
       expect(check.send(:result)[:growth_mb]).to be_nil
+    end
+  end
+
+  describe "#sustained_growth_kb" do
+    def check_with(samples)
+      described_class.new(iterations: 1, max_growth_kb: 50_000).tap do |check|
+        check.instance_variable_set(:@samples, samples)
+      end
+    end
+
+    it "takes the largest step between consecutive samples out of growth_kb" do
+      expect(check_with([100, 300, 350, 900, 950]).sustained_growth_kb).to eq(850 - 550)
+    end
+
+    it "leaves growth_kb whole when no step rises (largest step clamped at 0)" do
+      expect(check_with([500, 400, 300]).sustained_growth_kb).to eq(-200)
+    end
+
+    it "keeps every other step when the same largest step occurs twice" do
+      expect(check_with([0, 400, 800, 900]).sustained_growth_kb).to eq(500)
+    end
+
+    it "counts a transient spike once: the step up is taken out, the step down kept" do
+      expect(check_with([0, 0, 4_000, 1_000, 1_000]).sustained_growth_kb).to eq(-3_000)
+    end
+
+    it "takes the only step out when there are exactly two samples" do
+      expect(check_with([100, 250]).sustained_growth_kb).to eq(0)
+    end
+
+    it "returns nil when a sample is nil" do
+      expect(check_with([100, nil, 300]).sustained_growth_kb).to be_nil
+    end
+
+    it "reports nil sustained_growth_mb when a sample is nil" do
+      expect(check_with([100, nil, 300]).send(:result)[:sustained_growth_mb]).to be_nil
+    end
+
+    it "returns 0 with fewer than two samples" do
+      expect(check_with([]).sustained_growth_kb).to eq(0)
+      expect(check_with([500]).sustained_growth_kb).to eq(0)
+    end
+  end
+
+  # The judgment must not let one allocator step decide the result, but must
+  # still catch a leak. Synthetic series, sampled the way #run samples
+  # them: 100 iterations, a sample every 10.
+  describe "judgment on synthetic RSS series" do
+    def run_series(max_growth_kb:, iterations: 100, &rss_after)
+      done = 0
+      allow(Evilution::Memory).to receive(:rss_kb) { 100_000 + rss_after.call(done) }
+      described_class.new(iterations: iterations, max_growth_kb: max_growth_kb).run { done += 1 }
+    end
+
+    it "fails a series that grows steadily by 200 KB per iteration" do
+      result = run_series(max_growth_kb: 10_240) { |done| done * 200 }
+
+      expect(result[:passed]).to be false
+    end
+
+    it "passes a flat series with one large allocator step" do
+      result = run_series(max_growth_kb: 10_240) do |done|
+        done > described_class::WARMUP_ITERATIONS + 50 ? 18_432 : 0
+      end
+
+      expect(result[:growth_kb]).to eq(18_432)
+      expect(result[:passed]).to be true
+    end
+
+    it "reports sustained growth alongside the endpoint growth" do
+      result = run_series(max_growth_kb: 10_240) { |done| done * 200 }
+
+      expect(result[:growth_kb]).to eq(20_000)
+      expect(result[:sustained_growth_kb]).to eq(18_000)
+      expect(result[:sustained_growth_mb]).to eq(18_000 / 1024.0)
     end
   end
 end

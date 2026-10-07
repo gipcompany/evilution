@@ -12,6 +12,7 @@ require_relative "state_guard/world_example_groups"
 require_relative "state_guard/world_sources_by_path"
 require_relative "state_guard/world_filtered_examples"
 require_relative "state_guard/reporter_arrays"
+require_relative "state_guard/anonymous_example_group_examples"
 require_relative "state_guard/example_groups_constants"
 require_relative "state_guard/configuration_state"
 require_relative "../../diagnostic"
@@ -23,6 +24,7 @@ class Evilution::Integration::RSpec::StateGuard
     WorldSourcesByPath.new,
     WorldFilteredExamples.new,
     ReporterArrays.new,
+    AnonymousExampleGroupExamples.new,
     ExampleGroupsConstants.new,
     ConfigurationState.new
   ].freeze

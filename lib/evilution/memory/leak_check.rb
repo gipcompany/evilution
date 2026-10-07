@@ -9,9 +9,11 @@ class Evilution::Memory::LeakCheck
 
   attr_reader :samples
 
-  def initialize(iterations: DEFAULT_ITERATIONS, max_growth_kb: DEFAULT_MAX_GROWTH_KB)
+  def initialize(iterations: DEFAULT_ITERATIONS, max_growth_kb: DEFAULT_MAX_GROWTH_KB,
+                 warmup_iterations: WARMUP_ITERATIONS)
     @iterations = iterations
     @max_growth_kb = max_growth_kb
+    @warmup_iterations = warmup_iterations
     @samples = []
   end
 
@@ -32,8 +34,23 @@ class Evilution::Memory::LeakCheck
     samples.last - samples.first
   end
 
-  def passed?
+  # Growth from the first sample to the last, less the largest rise between two
+  # consecutive samples.
+  #
+  # RSS does not grow by the byte. The allocator takes memory in chunks, so a
+  # workload that has stopped growing can still step up once, by several MB,
+  # wherever the heap happens to cross a boundary, and that one step decided
+  # the endpoint reading. A leak is not one step: it grows across the run, and
+  # taking out its largest step leaves the rest of it.
+  def sustained_growth_kb
     kb = growth_kb
+    return kb if kb.nil? || samples.size < 2
+
+    kb - [largest_step_kb, 0].max
+  end
+
+  def passed?
+    kb = sustained_growth_kb
     return false if kb.nil?
 
     kb <= @max_growth_kb
@@ -41,8 +58,12 @@ class Evilution::Memory::LeakCheck
 
   private
 
+  def largest_step_kb
+    samples.each_cons(2).map { |before, after| after - before }.max
+  end
+
   def warmup(&block)
-    WARMUP_ITERATIONS.times { block.call }
+    @warmup_iterations.times { block.call }
     GC.start
     GC.compact if GC.respond_to?(:compact)
   end
@@ -74,10 +95,13 @@ class Evilution::Memory::LeakCheck
   end
 
   def result
+    sustained_kb = sustained_growth_kb
     {
       passed: passed?,
       growth_kb: growth_kb,
       growth_mb: growth_kb ? growth_kb / 1024.0 : nil,
+      sustained_growth_kb: sustained_kb,
+      sustained_growth_mb: sustained_kb ? sustained_kb / 1024.0 : nil,
       samples: samples,
       iterations: @iterations,
       max_growth_kb: @max_growth_kb,

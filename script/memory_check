@@ -11,6 +11,13 @@ COMPLEX_FIXTURE = File.expand_path("../spec/support/fixtures/memory_check/target
 COMPLEX_FIXTURE_SPEC = File.expand_path("../spec/support/fixtures/memory_check/target_examples.rb", __dir__)
 ITERATIONS = Integer(ENV.fetch("MEMORY_CHECK_ITERATIONS", 50))
 MAX_GROWTH_KB = Integer(ENV.fetch("MEMORY_CHECK_MAX_GROWTH_KB", 10_240))
+# Every check that picks mutations at random draws from its own Random seeded
+# with this, so a run exercises the same mutations every time and a failure can
+# be replayed by passing the printed seed back.
+SEED = Integer(ENV.fetch("MEMORY_CHECK_SEED", 42))
+COMPLEX_POOL_SIZE = 10
+COMPLEX_ITERATIONS = Integer(ENV.fetch("MEMORY_CHECK_COMPLEX_ITERATIONS", 100))
+COMPLEX_MAX_GROWTH_KB = Integer(ENV.fetch("MEMORY_CHECK_COMPLEX_MAX_GROWTH_KB", 10_240))
 
 def setup_workload
   parser = Evilution::AST::Parser.new
@@ -21,25 +28,40 @@ def setup_workload
   mutations
 end
 
-def run_check(name, iterations: ITERATIONS, max_growth_kb: MAX_GROWTH_KB, &)
-  check = Evilution::Memory::LeakCheck.new(iterations: iterations, max_growth_kb: max_growth_kb)
+def run_check(name, iterations: ITERATIONS, max_growth_kb: MAX_GROWTH_KB, picked: nil,
+              warmup_iterations: Evilution::Memory::LeakCheck::WARMUP_ITERATIONS, &)
+  check = Evilution::Memory::LeakCheck.new(iterations: iterations, max_growth_kb: max_growth_kb,
+                                           warmup_iterations: warmup_iterations)
   result = check.run(&)
-  report(name, result)
+  report(name, result, picked)
   result[:passed]
 end
 
-def report(name, result)
+def report(name, result, picked)
   status = result[:passed] ? "PASS" : "FAIL"
   metrics = format_metrics(result)
 
   puts "[#{status}] #{name}"
-  puts "  Growth: #{metrics[:growth]} (max: #{metrics[:max]})"
+  puts "  Sustained growth: #{metrics[:sustained]} (max: #{metrics[:max]})"
+  puts "  Growth: #{metrics[:growth]}"
   puts "  Samples (MB): #{metrics[:samples]}"
+  report_picked(picked) unless result[:passed]
   puts
+end
+
+# What a failed run exercised, so it can be replayed: the seed, and how often
+# each operator came up among the mutations the check picked.
+def report_picked(picked)
+  puts "  Seed: #{SEED} (MEMORY_CHECK_SEED)"
+  return if picked.nil? || picked.empty?
+
+  tally = picked.map(&:operator_name).tally.sort_by { |operator, count| [-count, operator.to_s] }
+  puts "  Operators (#{picked.size} picks): #{tally.map { |operator, count| "#{operator} x#{count}" }.join(", ")}"
 end
 
 def format_metrics(result)
   {
+    sustained: result[:sustained_growth_mb] ? format("%.1f MB", result[:sustained_growth_mb]) : "N/A",
     growth: result[:growth_mb] ? format("%.1f MB", result[:growth_mb]) : "N/A",
     max: format("%.1f MB", result[:max_growth_kb] / 1024.0),
     samples: result[:samples].map { |s| s ? format("%.1f", s / 1024.0) : "N/A" }.join(" -> ")
@@ -53,15 +75,21 @@ stub_test_command = ->(_m) { { passed: false } }
 all_passed = true
 
 # 1. InProcess isolation
-all_passed &= run_check("InProcess isolation") do
-  mutation = mutations.sample
+random = Random.new(SEED)
+picked = []
+all_passed &= run_check("InProcess isolation", picked: picked) do
+  mutation = mutations.sample(random: random)
+  picked << mutation
   isolator = Evilution::Isolation::InProcess.new
   isolator.call(mutation: mutation, test_command: stub_test_command, timeout: 5)
 end
 
 # 2. Fork isolation
-all_passed &= run_check("Fork isolation") do
-  mutation = mutations.sample
+random = Random.new(SEED)
+picked = []
+all_passed &= run_check("Fork isolation", picked: picked) do
+  mutation = mutations.sample(random: random)
+  picked << mutation
   isolator = Evilution::Isolation::Fork.new
   isolator.call(mutation: mutation, test_command: stub_test_command, timeout: 5)
 end
@@ -113,13 +141,31 @@ complex_subjects = complex_parser.call(COMPLEX_FIXTURE)
 complex_mutations = complex_subjects.flat_map { |s| complex_registry.mutations_for(s) }
 
 integration = Evilution::Integration::RSpec.new(test_files: [COMPLEX_FIXTURE_SPEC])
+complex_pool = complex_mutations.sample(COMPLEX_POOL_SIZE, random: Random.new(SEED))
+complex_turn = complex_pool.cycle
 
-# Budget is generous: per-mutation require() adds the file to $LOADED_FEATURES and
-# accumulates constant-redefinition warnings. Local runs land around 20 MB; CI
-# varies up to ~30 MB depending on Ruby build and GC pressure, so we leave headroom.
-all_passed &= run_check("RSpec integration per-mutation (Config)", iterations: 20, max_growth_kb: 40_960) do
-  mutation = complex_mutations.sample
-  integration.call(mutation)
+# This check used to grow 20-41 MB over 20 mutations, which was put down to
+# per-mutation require() and redefinition warnings and given a 40 MB budget. It
+# was a leak: every run left its examples reachable from
+# RSpec::Core::AnonymousExampleGroup, about 1 MB per mutation (fixed by
+# StateGuard::AnonymousExampleGroupExamples).
+#
+# The first run of a mutation still grows the process, as the heap reaches the
+# size that mutation needs, and the growth depends on which mutation it is. So
+# the check cycles through a fixed pool: warm-up runs each mutation twice, and
+# every measured run repeats work the warm-up already did. Growth from there
+# on is retained per run.
+#
+# The budget is 10 MB over 100 runs, about 100 KB per mutation: a leak of 200 KB
+# per mutation grows about 18 MB once its largest step is taken out, and fails.
+# Measured on Linux (aarch64) over seeds 1, 7, 42 and 99, sustained growth was
+# -0.9 to 0.6 MB on Ruby 3.4.10 and 0.7 to 2.8 MB on 4.0.7. Ruby 4.0.7 creeps
+# by about 30 KB per mutation in RSS with no Ruby objects retained, which is
+# below what this check can tell apart from allocator noise.
+all_passed &= run_check("RSpec integration per-mutation (Config)",
+                        iterations: COMPLEX_ITERATIONS, max_growth_kb: COMPLEX_MAX_GROWTH_KB,
+                        warmup_iterations: COMPLEX_POOL_SIZE * 2, picked: complex_pool) do
+  integration.call(complex_turn.next)
 end
 
 puts all_passed ? "All memory checks passed." : "Some memory checks failed!"
