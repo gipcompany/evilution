@@ -138,7 +138,7 @@ RSpec.describe Evilution::Mutator::Operator::SplatOperator do
     end
   end
 
-  # EV-qekp / gipcompany/evilution#4: the rest of a pattern is not a splat in
+  # The rest of a pattern is not a splat in
   # a call or a literal. Dropping `**` from a hash pattern rest is a syntax
   # error. Dropping `*` from an array/find pattern rest narrows the pattern,
   # which is not emitted.
