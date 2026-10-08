@@ -109,6 +109,19 @@ end
       expect(mutations_for("class C\n  def a = 1\n  Other.alias_method :b, :a\nend\n", "a")).to be_empty
     end
 
+    # Removing it would leave `if legacy?` dangling, which does not parse.
+    it "leaves an alias guarded by a modifier alone" do
+      src = "class C\n  def a = 1\n  alias b a if legacy?\n  alias_method :c, :a unless modern?\nend\n"
+
+      expect(mutations_for(src, "a")).to be_empty
+    end
+
+    it "drops an alias in a conditional written out in full" do
+      src = "class C\n  def a = 1\n  if legacy?\n    alias b a\n  end\nend\n"
+
+      expect(mutations_for(src, "a").map(&:parse_status)).to eq([:ok])
+    end
+
     it "leaves global variable aliases alone" do
       expect(mutations_for("class C\n  def a = 1\n  alias $new $old\nend\n", "a")).to be_empty
     end
@@ -134,6 +147,13 @@ end
 
       expect(mutated_sources(muts)).to eq(["class Collection\n  def size = 1\n  alias_method :count, :size\n  def each = 2\nend\n"])
       expect(filter.skipped_count).to eq(1)
+    end
+
+    it "reaches a class whose only methods sit in a singleton class" do
+      src = "class Report\n  alias_method :x, :y\n  class << self\n    alias make build\n    def build = new\n  end\nend\n"
+
+      expect(mutations_for(src, "build").map { |m| m.diff[/^- .*$/].delete_prefix("- ").strip })
+        .to eq(["alias_method :x, :y", "alias make build"])
     end
   end
 end
