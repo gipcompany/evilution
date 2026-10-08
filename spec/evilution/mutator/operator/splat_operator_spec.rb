@@ -138,6 +138,86 @@ RSpec.describe Evilution::Mutator::Operator::SplatOperator do
     end
   end
 
+  # The rest of a pattern is not a splat in
+  # a call or a literal. Dropping `**` from a hash pattern rest is a syntax
+  # error. Dropping `*` from an array/find pattern rest narrows the pattern,
+  # which is not emitted.
+  describe "pattern rests" do
+    it "does not mutate the keyword rest of a hash pattern in rightward assignment" do
+      expect(mutations_for("def foo(x)\n  x => { key:, **opts }\nend\n")).to be_empty
+    end
+
+    it "does not mutate the keyword rest of a hash pattern in a case/in clause" do
+      source = "def foo(x)\n  case x\n  in { key:, **opts } then opts\n  end\nend\n"
+
+      expect(mutations_for(source)).to be_empty
+    end
+
+    it "does not mutate the keyword rest of a hash pattern in a one-line `in` predicate" do
+      expect(mutations_for("def foo(x)\n  x in { key:, **opts }\nend\n")).to be_empty
+    end
+
+    it "does not mutate the keyword rest of a hash pattern without braces" do
+      source = "def foo(x)\n  case x\n  in key:, **opts then opts\n  end\nend\n"
+
+      expect(mutations_for(source)).to be_empty
+    end
+
+    it "does not mutate the rest of an array pattern" do
+      source = "def foo(x)\n  case x\n  in [a, *rest] then rest\n  end\nend\n"
+
+      expect(mutations_for(source)).to be_empty
+    end
+
+    it "does not mutate either rest of a find pattern" do
+      source = "def foo(x)\n  case x\n  in [*pre, 1, *post] then pre\n  end\nend\n"
+
+      expect(mutations_for(source)).to be_empty
+    end
+
+    it "does not mutate rests inside a nested pattern" do
+      source = "def foo(x)\n  case x\n  in { a: [*r1, { b: [*r2] }], **rest } then rest\n  end\nend\n"
+
+      expect(mutations_for(source)).to be_empty
+    end
+
+    it "does not mutate rests inside a constant pattern" do
+      source = "def foo(x)\n  case x\n  in Foo(a, *r) then r\n  in Bar(k:, **o) then o\n  end\nend\n"
+
+      expect(mutations_for(source)).to be_empty
+    end
+
+    it "does not crash and emits no mutation for an anonymous rest" do
+      source = "def foo(x)\n  case x\n  in [a, *] then a\n  in { k:, ** } then k\n  end\nend\n"
+
+      expect(mutations_for(source)).to be_empty
+    end
+
+    it "does not mutate a `**nil` rest" do
+      expect(mutations_for("def foo(x)\n  x in { k:, **nil }\nend\n")).to be_empty
+    end
+
+    it "still mutates the rest of a multiple assignment" do
+      mutations = mutations_for("def foo(x)\n  a, *b = x\nend\n")
+
+      expect(mutations.map(&:mutated_source)).to eq(["def foo(x)\n  a, b = x\nend\n"])
+    end
+
+    it "still mutates a splat in a call inside the clause body" do
+      source = "def foo(x)\n  case x\n  in { key:, **opts } then bar(**opts)\n  end\nend\n"
+
+      expect(mutations_for(source).map(&:mutated_source))
+        .to eq(["def foo(x)\n  case x\n  in { key:, **opts } then bar(opts)\n  end\nend\n"])
+    end
+
+    it "still mutates a splat in a call inside a pinned expression" do
+      source = "def foo(x)\n  case x\n  in [*rest, ^(bar(*y))] then rest\n  end\nend\n"
+
+      expect(mutations_for(source).map(&:mutated_source))
+        .to eq(["def foo(x)\n  case x\n  in [*rest, ^(bar(y))] then rest\n  end\nend\n"])
+    end
+  end
+
   describe "anonymous splat forwarding" do
     it "does not crash and emits no mutation for an anonymous `*` forward" do
       source = "def foo(*)\n  bar(*)\nend\n"
