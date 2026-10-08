@@ -3,14 +3,22 @@
 require_relative "../operator"
 
 class Evilution::Mutator::Operator::SplatOperator < Evilution::Mutator::Base
+  def initialize(**options)
+    super
+    @exempt_splats = Set.new.compare_by_identity
+  end
+
   def visit_splat_node(node)
-    mutate_remove_splat(node) if node.expression && !pattern_rests.include?(node)
+    mutate_remove_splat(node) if node.expression && !@exempt_splats.include?(node)
 
     super
   end
 
+  # A `**splat` inside a hash literal stays as written: dropping `**` from
+  # `{ a: 1, **opts }` leaves a bare value among key-value pairs, which is a
+  # syntax error.
   def visit_hash_node(node)
-    node.elements.each { |el| hash_elements.add(el) }
+    node.elements.each { |el| @exempt_splats.add(el) }
     super
   end
 
@@ -23,18 +31,18 @@ class Evilution::Mutator::Operator::SplatOperator < Evilution::Mutator::Base
   # (`a, *b = x`) is still mutated: `a, b = x` parses and changes what `b`
   # binds.
   def visit_hash_pattern_node(node)
-    pattern_rests.add(node.rest) if node.rest
+    @exempt_splats.add(node.rest) if node.rest
     super
   end
 
   def visit_array_pattern_node(node)
-    pattern_rests.add(node.rest) if node.rest
+    @exempt_splats.add(node.rest) if node.rest
     super
   end
 
   def visit_find_pattern_node(node)
-    pattern_rests.add(node.left)
-    pattern_rests.add(node.right)
+    @exempt_splats.add(node.left)
+    @exempt_splats.add(node.right)
     super
   end
 
@@ -47,7 +55,7 @@ class Evilution::Mutator::Operator::SplatOperator < Evilution::Mutator::Base
   # positional-before-keyword is fine.
   def visit_keyword_hash_node(node)
     node.elements.drop(1).each do |el|
-      kwarg_preceded_splats.add(el) if el.is_a?(Prism::AssocSplatNode)
+      @exempt_splats.add(el) if el.is_a?(Prism::AssocSplatNode)
     end
 
     super
@@ -55,9 +63,7 @@ class Evilution::Mutator::Operator::SplatOperator < Evilution::Mutator::Base
 
   def visit_assoc_splat_node(node)
     return super if node.value.nil?
-    return super if hash_elements.include?(node)
-    return super if kwarg_preceded_splats.include?(node)
-    return super if pattern_rests.include?(node)
+    return super if @exempt_splats.include?(node)
 
     mutate_remove_double_splat(node)
 
@@ -65,18 +71,6 @@ class Evilution::Mutator::Operator::SplatOperator < Evilution::Mutator::Base
   end
 
   private
-
-  def hash_elements
-    @hash_elements ||= Set.new.compare_by_identity
-  end
-
-  def kwarg_preceded_splats
-    @kwarg_preceded_splats ||= Set.new.compare_by_identity
-  end
-
-  def pattern_rests
-    @pattern_rests ||= Set.new.compare_by_identity
-  end
 
   def mutate_remove_splat(node)
     add_mutation(
