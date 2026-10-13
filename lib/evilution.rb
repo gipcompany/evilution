@@ -253,6 +253,37 @@ module Evilution
     @in_isolated_worker = previous
   end
 
+  # Marks the stretch in which the tests run against a mutation whose source has
+  # already loaded. A fork child that dies in it reports the death as the
+  # mutation's doing; one that dies earlier cannot say so.
+  #
+  # The child asks at exit, and by then the block is over in one of two ways.
+  # A stack overflow that exhausts the machine stack before the VM's own makes
+  # Ruby run neither `rescue` nor `ensure`, so the mark is still set. Which of
+  # the two stacks gives out first depends on the stack limit of the process,
+  # not on the Ruby version. Otherwise the exception unwinds through here, the
+  # mark is cleared, and the exception itself is kept to be recognised by.
+  def self.while_running_tests
+    previous = @running_tests
+    @running_tests = true
+    @tests_left_by = nil
+    yield
+  rescue Exception => e # rubocop:disable Lint/RescueException -- recorded and re-raised, never handled
+    @tests_left_by = e
+    raise
+  ensure
+    @running_tests = previous
+  end
+
+  def self.running_tests?
+    @running_tests == true
+  end
+
+  # Whether a process dying on `error` is dying of its test run.
+  def self.died_running_tests?(error)
+    running_tests? || @tests_left_by.equal?(error)
+  end
+
   # Base directory for resolving project-relative paths. An isolated worker
   # has chdir'd into a per-mutation sandbox (EV-wqxu / GH #1278), so callers
   # in that context must anchor against PROJECT_ROOT rather than Dir.pwd —
