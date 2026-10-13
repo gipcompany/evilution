@@ -247,6 +247,44 @@ RSpec.describe Evilution::Parallel::WorkQueue::Worker do
       expect(worker.wall_time).to be > 0.0
     end
 
+    it "retires without timings when the stats frame cannot be read" do
+      worker = described_class.spawn(worker_index: 0, hooks: nil) { |x| x }
+      allow(worker).to receive(:read_result).and_raise(Evilution::Parallel::WorkQueue::Channel::BadFrame, "garbled")
+
+      stat = nil
+      expect { stat = worker.retire }.not_to raise_error
+
+      expect(stat.busy_time).to eq(0.0)
+      expect(stat.wall_time).to eq(0.0)
+      expect(worker.res_io.closed?).to be(true)
+    end
+
+    it "reads the stats frame within what is left of the grace period" do
+      worker = described_class.spawn(worker_index: 0, hooks: nil) { |x| x }
+      original = Evilution::Parallel::WorkQueue::Channel.method(:read)
+      allowed = nil
+      allow(Evilution::Parallel::WorkQueue::Channel).to receive(:read) do |io, **options|
+        allowed = options[:frame_timeout]
+        original.call(io, **options)
+      end
+
+      worker.retire
+
+      expect(allowed).to be_between(0, Evilution::Parallel::WorkQueue::TIMING_GRACE_PERIOD)
+    end
+
+    it "reads a result with the channel's own allowance" do
+      worker = described_class.spawn(worker_index: 0, hooks: nil) { |x| x }
+      worker.send_item(0, :echo)
+      expect(Evilution::Parallel::WorkQueue::Channel).to receive(:read)
+        .with(worker.res_io, frame_timeout: Evilution::Parallel::WorkQueue::Channel::FRAME_TIMEOUT).and_call_original
+
+      expect(worker.read_result).to eq([0, :ok, :echo])
+    ensure
+      allow(Evilution::Parallel::WorkQueue::Channel).to receive(:read).and_call_original
+      worker.retire
+    end
+
     it "closes pipes and reaps the child" do
       worker = described_class.spawn(worker_index: 0, hooks: nil) { |x| x }
       worker.retire

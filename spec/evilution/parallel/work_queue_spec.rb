@@ -151,6 +151,43 @@ RSpec.describe Evilution::Parallel::WorkQueue do
       expect(stat.busy_time).to be > 0.0
     end
 
+    # The timings are a courtesy. A frame that cannot be read at this point
+    # costs the figures, not the results the run already has.
+    it "keeps the results when a worker's final timing frame cannot be read" do
+      queue = described_class.new(size: 1)
+      original = Evilution::Parallel::WorkQueue::Channel.method(:read)
+      calls = 0
+      allow(Evilution::Parallel::WorkQueue::Channel).to receive(:read) do |io, **options|
+        calls += 1
+        raise Evilution::Parallel::WorkQueue::Channel::BadFrame, "garbled" if calls > 1
+
+        original.call(io, **options)
+      end
+
+      results = nil
+      expect { results = queue.map([1]) { |n| n + 1 } }.not_to raise_error
+
+      expect(results).to eq([2])
+      expect(queue.worker_stats.first.wall_time).to eq(0.0)
+    end
+
+    # Collecting the timings has a grace period of its own. A read that began
+    # inside it must not run past it on a frame that never completes.
+    it "reads a final timing frame within what is left of the grace period" do
+      queue = described_class.new(size: 1)
+      original = Evilution::Parallel::WorkQueue::Channel.method(:read)
+      allowed = []
+      allow(Evilution::Parallel::WorkQueue::Channel).to receive(:read) do |io, **options|
+        allowed << options[:frame_timeout]
+        original.call(io, **options)
+      end
+
+      queue.map([1]) { |n| n }
+
+      expect(allowed.first).to eq(Evilution::Parallel::WorkQueue::Channel::FRAME_TIMEOUT)
+      expect(allowed.last).to be_between(0, described_class::TIMING_GRACE_PERIOD)
+    end
+
     it "reaps every worker process so no zombies remain after map" do
       queue = described_class.new(size: 2)
       queue.map([1, 2, 3, 4]) { |n| n }

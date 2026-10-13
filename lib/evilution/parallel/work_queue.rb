@@ -16,6 +16,7 @@ class Evilution::Parallel::WorkQueue
   Unfinished = Data.define(:reason)
   TIMED_OUT = Unfinished.new(reason: :timeout)
   DIED = Unfinished.new(reason: :died)
+  UNREADABLE = Unfinished.new(reason: :unreadable)
 
   def initialize(size:, hooks: nil, prefetch: 1, item_timeout: nil, worker_max_items: nil)
     Validators::PositiveInt.call!(:size, size)
@@ -80,17 +81,16 @@ class Evilution::Parallel::WorkQueue
     deadline = monotonic_now + TIMING_GRACE_PERIOD
 
     until io_to_worker.empty?
-      remaining = deadline - monotonic_now
-      break if remaining <= 0
-      break unless poll_and_apply(io_to_worker, remaining)
+      break if deadline - monotonic_now <= 0
+      break unless poll_and_apply(io_to_worker, deadline)
     end
   end
 
-  def poll_and_apply(io_to_worker, remaining)
-    readable, = IO.select(io_to_worker.keys, nil, nil, remaining)
+  def poll_and_apply(io_to_worker, deadline)
+    readable, = IO.select(io_to_worker.keys, nil, nil, deadline - monotonic_now)
     return false unless readable
 
-    readable.each { |io| apply_final_timing(io_to_worker.delete(io), io) }
+    readable.each { |io| apply_final_timing(io_to_worker.delete(io), io, deadline) }
     true
   end
 
@@ -98,15 +98,21 @@ class Evilution::Parallel::WorkQueue
     Process.clock_gettime(Process::CLOCK_MONOTONIC)
   end
 
-  def apply_final_timing(worker, io)
-    message = Evilution::Parallel::WorkQueue::Channel.read(io)
-    return if message.nil?
+  # The timings are a courtesy: a frame that cannot be read here costs the
+  # figures and nothing else. The read gets what is left of the grace period,
+  # so a frame that begins inside it and never completes does not outlast it.
+  def apply_final_timing(worker, io, deadline)
+    allowed = [deadline - monotonic_now, 0].max
+    message = Evilution::Parallel::WorkQueue::Channel.read(io, frame_timeout: allowed)
+    return unless message.is_a?(Array)
 
     tag, busy_time, wall_time = message
     return unless tag == STATS
 
     worker.busy_time = busy_time
     worker.wall_time = wall_time
+  rescue Evilution::Parallel::WorkQueue::Channel::BadFrame
+    nil
   end
 end
 
