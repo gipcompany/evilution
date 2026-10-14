@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "stringio"
+require "tempfile"
 require "evilution/isolation/in_process"
 
 RSpec.describe Evilution::Isolation::InProcess do
@@ -571,6 +572,19 @@ RSpec.describe Evilution::Isolation::InProcess do
       $stderr = saved
     end
 
+    # The process is then ended without the flush a normal exit does, and the
+    # stream may be one that buffers: `$stderr` reassigned to a file.
+    it "pushes the notice out of a stream that buffers" do
+      Tempfile.create("stderr") do |file|
+        file.sync = false
+        described_class.watch(named_mutation)
+
+        described_class.report_death(error, stream: file)
+
+        expect(File.read(file.path)).to include("constant_namespace_strip: lib/example.rb:202")
+      end
+    end
+
     it "says nothing when no mutation was being tested" do
       described_class.report_death(error, stream:)
 
@@ -616,6 +630,71 @@ RSpec.describe Evilution::Isolation::InProcess do
       Process.wait(pid)
 
       expect(read_io.read).to eq("")
+    end
+  end
+
+  # A run that died measured nothing, and the process has to end with the
+  # status of a tool error rather than Ruby's own for an uncaught exception.
+  # The death is on record for whoever decides that status.
+  describe ".died?" do
+    let(:stream) { StringIO.new }
+    let(:named_mutation) { double("Mutation", to_s: "constant_namespace_strip: lib/example.rb:202") }
+    let(:error) { SystemStackError.new("stack level too deep") }
+
+    after { described_class.unwatch }
+
+    it "is false while nothing has died" do
+      described_class.watch(named_mutation)
+
+      expect(described_class.died?).to be(false)
+    end
+
+    it "is true once the death of a mutation under test was reported" do
+      described_class.watch(named_mutation)
+
+      described_class.report_death(error, stream:)
+
+      expect(described_class.died?).to be(true)
+    end
+
+    it "is false when no mutation was being tested" do
+      described_class.report_death(error, stream:)
+
+      expect(described_class.died?).to be(false)
+    end
+
+    it "is false when the process is not dying on an exception" do
+      described_class.watch(named_mutation)
+
+      described_class.report_death(nil, stream:)
+
+      expect(described_class.died?).to be(false)
+    end
+
+    it "is false when the process was asked to exit" do
+      described_class.watch(named_mutation)
+
+      described_class.report_death(SystemExit.new(1), stream:)
+
+      expect(described_class.died?).to be(false)
+    end
+
+    # A Ctrl-C keeps the status Ruby gives it.
+    it "is false when the process was interrupted" do
+      described_class.watch(named_mutation)
+
+      described_class.report_death(Interrupt.new, stream:)
+
+      expect(described_class.died?).to be(false)
+    end
+
+    it "is forgotten with the mutation" do
+      described_class.watch(named_mutation)
+      described_class.report_death(error, stream:)
+
+      described_class.unwatch
+
+      expect(described_class.died?).to be(false)
     end
   end
 
