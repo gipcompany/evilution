@@ -54,8 +54,13 @@ class Evilution::Cache
     "#{safe_filename(mutation.file_path)}_#{content_hash[0, 16]}"
   end
 
+  # Several operators emit more than one mutation at the same location (e.g.
+  # nil_replacement -> true / false / 0), so the location alone would let a
+  # killed sibling answer for a survivor. The original source is fixed per
+  # cache file, so a digest of the mutated source identifies the mutation.
   def entry_key(mutation)
-    "#{mutation.operator_name}:#{mutation.line}:#{mutation.column}"
+    mutated_digest = Digest::SHA256.hexdigest(mutation.mutated_source)
+    "#{mutation.operator_name}:#{mutation.line}:#{mutation.column}:#{mutated_digest[0, 16]}"
   end
 
   def safe_filename(path)
