@@ -2303,6 +2303,35 @@ RSpec.describe Evilution::Runner do
       second_runner.call
     end
 
+    it "runs a mutation that shares operator, line and column with a killed one" do
+      sibling = double(
+        "Mutation",
+        subject: subject_obj,
+        operator_name: "comparison_replacement",
+        original_source: "a >= b",
+        mutated_source: "a < b",
+        file_path: "lib/example.rb",
+        line: 3,
+        column: 4,
+        diff: "- a >= b\n+ a < b",
+        strip_sources!: nil,
+        unparseable?: false,
+        unified_diff: nil
+      )
+      survived_result = Evilution::Result::MutationResult.new(mutation: sibling, status: :survived, duration: 0.1)
+      registry = Evilution::Mutator::Registry.default
+      allow(registry).to receive(:mutations_for).and_return([mutation, sibling])
+      isolator = Evilution::Isolation::Fork.new
+      allow(isolator).to receive(:call) do |mutation:, **|
+        mutation.equal?(sibling) ? survived_result : mutation_result
+      end
+
+      summary = incremental_runner.call
+
+      expect(isolator).to have_received(:call).twice
+      expect(summary.results.map(&:status)).to eq(%i[killed survived])
+    end
+
     it "returns correct results from cache" do
       incremental_runner.call
 

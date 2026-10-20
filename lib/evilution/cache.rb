@@ -54,8 +54,13 @@ class Evilution::Cache
     "#{safe_filename(mutation.file_path)}_#{content_hash[0, 16]}"
   end
 
+  # An operator can emit several mutations at one location (nil_replacement
+  # gives true / false / 0 / "" at the same spot), so the location alone
+  # would let a killed mutation answer for its siblings. The original source
+  # is fixed within a cache file, so the mutated source tells them apart.
   def entry_key(mutation)
-    "#{mutation.operator_name}:#{mutation.line}:#{mutation.column}"
+    source_digest = Digest::SHA256.hexdigest(mutation.mutated_source)[0, 16]
+    "#{mutation.operator_name}:#{mutation.line}:#{mutation.column}:#{source_digest}"
   end
 
   def safe_filename(path)
