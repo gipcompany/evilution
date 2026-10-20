@@ -12,6 +12,7 @@ RSpec.describe Evilution::Cache do
     double("Mutation",
            file_path: "lib/example.rb",
            original_source: "class Example\n  def foo\n    1 + 2\n  end\nend\n",
+           mutated_source: "class Example\n  def foo\n    1 - 2\n  end\nend\n",
            operator_name: "arithmetic_replacement",
            line: 3,
            column: 6)
@@ -41,6 +42,7 @@ RSpec.describe Evilution::Cache do
       changed_mutation = double("Mutation",
                                 file_path: "lib/example.rb",
                                 original_source: "class Example\n  def foo\n    1 + 3\n  end\nend\n",
+                                mutated_source: "class Example\n  def foo\n    1 - 3\n  end\nend\n",
                                 operator_name: "arithmetic_replacement",
                                 line: 3,
                                 column: 6)
@@ -54,6 +56,7 @@ RSpec.describe Evilution::Cache do
       stripped = double("Mutation",
                         file_path: "lib/example.rb",
                         original_source: nil,
+                        mutated_source: nil,
                         operator_name: "arithmetic_replacement",
                         line: 3,
                         column: 6)
@@ -83,6 +86,7 @@ RSpec.describe Evilution::Cache do
       stripped = double("Mutation",
                         file_path: "lib/example.rb",
                         original_source: nil,
+                        mutated_source: nil,
                         operator_name: "arithmetic_replacement",
                         line: 3,
                         column: 6)
@@ -106,6 +110,7 @@ RSpec.describe Evilution::Cache do
       mutation_line5 = double("Mutation",
                               file_path: "lib/example.rb",
                               original_source: mutation.original_source,
+                              mutated_source: mutation.mutated_source,
                               operator_name: "arithmetic_replacement",
                               line: 5,
                               column: 6)
@@ -119,6 +124,7 @@ RSpec.describe Evilution::Cache do
       other_op = double("Mutation",
                         file_path: "lib/example.rb",
                         original_source: mutation.original_source,
+                        mutated_source: mutation.mutated_source,
                         operator_name: "string_literal",
                         line: 3,
                         column: 6)
@@ -126,6 +132,32 @@ RSpec.describe Evilution::Cache do
       cache.store(mutation, result_data)
 
       expect(cache.fetch(other_op)).to be_nil
+    end
+
+    it "distinguishes mutations at the same operator, line and column with different mutated source" do
+      sibling = double("Mutation",
+                       file_path: "lib/example.rb",
+                       original_source: mutation.original_source,
+                       mutated_source: "class Example\n  def foo\n    1 * 2\n  end\nend\n",
+                       operator_name: "arithmetic_replacement",
+                       line: 3,
+                       column: 6)
+
+      cache.store(mutation, result_data)
+
+      expect(cache.fetch(sibling)).to be_nil
+      expect(cache.fetch(mutation)[:status]).to eq(:killed)
+    end
+
+    it "misses an entry stored under the old operator:line:column key" do
+      cache.store(mutation, result_data)
+
+      Dir.glob(File.join(cache_dir, "*.json")).each do |path|
+        legacy = { "arithmetic_replacement:3:6" => JSON.parse(File.read(path)).values.first }
+        File.write(path, JSON.generate(legacy))
+      end
+
+      expect(cache.fetch(mutation)).to be_nil
     end
   end
 
