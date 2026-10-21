@@ -63,6 +63,20 @@ RSpec.describe Evilution::Cache do
 
       expect(cache.fetch(stripped)).to be_nil
     end
+
+    it "returns nil when only mutated_source is nil" do
+      cache.store(mutation, result_data)
+
+      half_stripped = double("Mutation",
+                             file_path: "lib/example.rb",
+                             original_source: mutation.original_source,
+                             mutated_source: nil,
+                             operator_name: "arithmetic_replacement",
+                             line: 3,
+                             column: 6)
+
+      expect(cache.fetch(half_stripped)).to be_nil
+    end
   end
 
   describe "#store" do
@@ -92,6 +106,19 @@ RSpec.describe Evilution::Cache do
                         column: 6)
 
       expect { cache.store(stripped, result_data) }.not_to raise_error
+      expect(Dir.glob(File.join(cache_dir, "*.json"))).to be_empty
+    end
+
+    it "is a no-op when only mutated_source is nil" do
+      half_stripped = double("Mutation",
+                             file_path: "lib/example.rb",
+                             original_source: mutation.original_source,
+                             mutated_source: nil,
+                             operator_name: "arithmetic_replacement",
+                             line: 3,
+                             column: 6)
+
+      expect { cache.store(half_stripped, result_data) }.not_to raise_error
       expect(Dir.glob(File.join(cache_dir, "*.json"))).to be_empty
     end
   end
