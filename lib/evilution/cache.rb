@@ -12,7 +12,7 @@ class Evilution::Cache
   end
 
   def fetch(mutation)
-    return nil if mutation.original_source.nil?
+    return nil if stripped?(mutation)
 
     file_key = file_key(mutation)
     entry_key = entry_key(mutation)
@@ -27,7 +27,7 @@ class Evilution::Cache
   end
 
   def store(mutation, result_data)
-    return if mutation.original_source.nil?
+    return if stripped?(mutation)
 
     file_key = file_key(mutation)
     entry_key = entry_key(mutation)
@@ -48,6 +48,11 @@ class Evilution::Cache
   end
 
   private
+
+  # Both keys digest a source, so a mutation missing either one cannot be keyed.
+  def stripped?(mutation)
+    mutation.original_source.nil? || mutation.mutated_source.nil?
+  end
 
   def file_key(mutation)
     content_hash = Digest::SHA256.hexdigest(mutation.original_source)
